@@ -10,7 +10,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.preprocessing import MinMaxScaler
 import statsmodels.api as statsm
 
 df = pd.read_spss('C:/Users/Ang/Documents/DATA SCIENCE/Thesis/Data thesis/Sanquin_data.sav')
@@ -91,7 +90,6 @@ print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
 threshold = 0.510
 y_pred2 = logreg_cv.predict_proba(X_test)
 predicted_LR = (y_pred2 [:,1] >= threshold).astype('int')
-
 print("AUC:", metrics.roc_auc_score(y_test, y_pred2[:,1]))
 print("F1:",metrics.f1_score(y_test, predicted_LR))
 print("Classification report: \n", classification_report(y_test, predicted_LR)) 
@@ -123,7 +121,6 @@ print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
 threshold = 0.329
 y_pred2 = RFcv.predict_proba(X_test)
 predicted_RF = (y_pred2 [:,1] >= threshold).astype('int')
-
 print("F1:",metrics.f1_score(y_test, predicted_RF))
 print("Classification report: \n", classification_report(y_test, predicted_RF)) 
 print("Confusion matrix: \n", confusion_matrix(y_test, predicted_RF))
@@ -133,6 +130,7 @@ fi = pd.DataFrame({'feature': list(X.columns),
                     sort_values('importance', ascending = False)
 print(fi)
 
+%matplotlib inline
 cnf_matrix = confusion_matrix(y_test, predicted_RF)
 class_names=[0,1] 
 fig, ax = plt.subplots()
@@ -175,7 +173,6 @@ print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
 threshold = 0.443
 y2_pred2 = logreg_cv2.predict_proba(X2_test)
 predicted_LR2 = (y2_pred2 [:,1] >= threshold).astype('int')
-
 print("AUC DF2:", metrics.roc_auc_score(y2_test, y2_pred2[:,1]))
 print("F1 DF2:",metrics.f1_score(y2_test, predicted_LR2))
 print("Classification report DF2: \n", classification_report(y2_test, predicted_LR2)) 
@@ -257,7 +254,6 @@ print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
 threshold = 0.591
 y3_pred2 = logreg_cv3.predict_proba(X3_test)
 predicted_LR3 = (y3_pred2 [:,1] >= threshold).astype('int')
-
 print("AUC DF3:", metrics.roc_auc_score(y3_test, y3_pred2[:,1]))
 print("F1 DF3:",metrics.f1_score(y3_test, predicted_LR2))
 print("Classification report DF3: \n", classification_report(y3_test, predicted_LR3)) 
