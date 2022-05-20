@@ -18,3 +18,99 @@ from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import MinMaxScaler
 import statsmodels.api as statsm
+
+# Preprocessing
+## Only keeping DIS rows
+df = df[df.DISorDonatie == "DIS participatie data rij"]
+
+## Making variable for hormonal contraception + hormone supplements
+df['HC1'] = df['DIS2_v75_1_2'] == 'ja, nu' #pil
+df['HC2'] = df['DIS2_v75_2_2'] == 'ja, nu' #prikpil
+df['HC3'] = df['DIS2_v75_3_2'] == 'ja, nu' #pleister
+df['HC4'] = df['DIS2_v75_4_2'] == 'ja, nu' #hormoonspiraal
+df['HC5'] = df['DIS2_v75_5_2'] == 'ja, nu' #nuvaring
+df['HC6'] = df['DIS2_v75_6_2'] == 'ja, nu' #overig
+df['HC_total'] = df['HC1'] | df['HC2'] | df['HC3'] | df['HC4'] | df['HC5'] | df['HC6']
+df['HS_total'] = df['DIS2_v80_2'] == "nvt, gebruik nog oestrogenen tegen overgangsklachten"
+
+## Creating outcome variable for VVR
+df["Duizelig"] = df['DIS2_v22'].str.contains("6", case=True, regex = False)
+df["Misselijk"] = df['DIS2_v22'].str.contains("8", case=True, regex = False)
+df["Zweten"] = df['DIS2_v22'].str.contains("9", case=True, regex = False)
+df["Hyperventilatie"] = df['DIS2_v22'].str.contains("10", case=True, regex = False)
+df["Flauwvallen"] = df['DIS2_v22'].str.contains("11", case=True, regex = False)
+df["VVR"] = df["Duizelig"] | df["Misselijk"] | df["Zweten"] | df["Hyperventilatie"] | df["Flauwvallen"]
+
+## Only keeping relevant columns
+df.rename(columns = {'DIS2_v19 ':'Ever_fainted', 'Age_DIS2':'Age', 'DIS2_v77':'Menopause',
+                     'DIS2_v05':'Weight','DIS2_TotAantDonaties':'N_donaties','DIS2_v03':'Gender2'}, inplace = True)
+df = df[['Age','Ever_fainted','Menopause','Weight','N_donaties','Gender2','OC_total','HORM_total','VVR']]
+
+## Changing type
+df['Ever_fainted'] = df['Ever_fainted'].replace(['ja','nee'],['1.0','0.0'])
+df['Menopause'] = df['Menopause'].replace(['ja','nee'],['1.0','0.0'])
+
+## Making two extra data frames
+DF2 = df.loc[df['Menopause'] != "1.0"]
+DF2 = DF2.loc[DF2['Age'] < 55]
+
+DF3 = df.loc[df['Menopause'] != "0.0"]
+DF3 = DF3.loc[DF3['Age'] > 30]
+
+# Running models
+## Full Dataframe DF1
+feature_cols = ["Age", "N_donaties", "Weight", "Ever_fainted", "HC_total", "HS_total"]
+X = df[feature_cols]
+Y = df.VVR
+X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=9) 
+
+sm = SMOTE(sampling_strategy=0.4, random_state=42)
+X2, Y2 = sm.fit_resample(X_train, y_train)
+RUS = RandomUnderSampler(sampling_strategy = 0.5)
+X_train_res, y_train_res = RUS.fit_resample(X2, Y2)
+
+## Logistic Regression
+logreg = LogisticRegression(max_iter=200000000)
+logreg.fit(X_train_res, np.ravel(y_train_res))
+y_pred_LR = logreg.predict(X_test)
+
+c_space = np.logspace(0, 1, 15)
+param_grid = {'C': c_space}
+
+logreg_cv = GridSearchCV(logreg, param_grid, cv=10)
+logreg_cv.fit(X_train_res, np.ravel(y_train_res))
+y_pred_LR2 = logreg_cv.predict(X_test)
+print(logreg_cv.best_params_)
+
+yhat = logreg_cv.predict_proba(X_test)[:,1]
+
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+
+thresholds = arange(0, 1, 0.001)
+scores = [f1_score(y_test, to_labels(yhat, t)) for t in thresholds]
+ix = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.5f' % (thresholds[ix], scores[ix]))
+threshold = 0.514
+predicted_proba = logreg_cv.predict_proba(X_test)
+predicted = (predicted_proba [:,1] >= threshold).astype('int')
+
+print(classification_report(y_test, predicted)) 
+print(confusion_matrix(y_test, predicted))
+
+## Random Forest
+RF = RandomForestClassifier(random_state=80)
+RF.fit(X_train_res, np.ravel(y_train_res))
+y_pred_RF = RF.predict(X_test)
+
+n_estimators = np.linspace(64, 128, endpoint=True, dtype=int)
+criterion = ['gini', 'entropy']
+max_depth =  range(5,9)
+max_features = ['auto', 'sqrt', 'log2']
+bootstrap = ['True', 'False']
+gridparameters = {'n_estimators': n_estimators, 'criterion': criterion, 'max_depth' : max_depth, 
+                   'max_features': max_features, 'bootstrap': bootstrap}
+RFcv = GridSearchCV(estimator = RF, param_grid = gridparameters, scoring = 'f1', refit = 'f1', verbose=0, cv=10)
+RFcv.fit(X_train_res, np.ravel(y_train_res))
+y_pred_RFcv = RFcv.predict(X_test)
+print(RFcv.best_params_)
