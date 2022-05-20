@@ -1,23 +1,19 @@
 import pandas as pd
 import pyreadstat
 import numpy as np
-import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn import metrics
 from math import sqrt
-from imblearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import RandomUnderSampler
-from sklearn.datasets import make_classification
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score
-from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.preprocessing import MinMaxScaler
 import statsmodels.api as statsm
+
+df = pd.read_spss('C:/Users/Ang/Documents/DATA SCIENCE/Thesis/Data thesis/Sanquin_data.sav')
 
 # Preprocessing
 ## Only keeping DIS rows
@@ -46,18 +42,24 @@ df.rename(columns = {'DIS2_v19 ':'Ever_fainted', 'Age_DIS2':'Age', 'DIS2_v77':'M
                      'DIS2_v05':'Weight','DIS2_TotAantDonaties':'N_donaties','DIS2_v03':'Gender2'}, inplace = True)
 df = df[['Age','Ever_fainted','Menopause','Weight','N_donaties','Gender2','OC_total','HORM_total','VVR']]
 
-## Changing type
+## Delete all men
+df = df[df.Gender2 != 'man']
+df.drop(["Gender2"], inplace = True, axis=1)
+
+## Deleting outliers
+df = df[df['Weight'] > 50.0]
+
+## Changing values
 df['Ever_fainted'] = df['Ever_fainted'].replace(['ja','nee'],['1.0','0.0'])
 df['Menopause'] = df['Menopause'].replace(['ja','nee'],['1.0','0.0'])
 
 ## Making two extra data frames
 DF2 = df.loc[df['Menopause'] != "1.0"]
-DF2 = DF2.loc[DF2['Age'] < 55]
-
 DF3 = df.loc[df['Menopause'] != "0.0"]
-DF3 = DF3.loc[DF3['Age'] > 30]
+
 
 # Running models
+
 ## Full Dataframe DF1
 feature_cols = ["Age", "N_donaties", "Weight", "Ever_fainted", "HC_total", "HS_total"]
 X = df[feature_cols]
@@ -65,47 +67,42 @@ Y = df.VVR
 X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=9) 
 
 sm = SMOTE(sampling_strategy=0.4, random_state=42)
-X2, Y2 = sm.fit_resample(X_train, y_train)
+X_sm, Y_sm = sm.fit_resample(X_train, y_train)
 RUS = RandomUnderSampler(sampling_strategy = 0.5)
-X_train_res, y_train_res = RUS.fit_resample(X2, Y2)
+X_train_res, y_train_res = RUS.fit_resample(X_sm, Y_sm)
 
 ## Logistic Regression
-logreg = LogisticRegression(max_iter=200000000)
-logreg.fit(X_train_res, np.ravel(y_train_res))
-y_pred_LR = logreg.predict(X_test)
-
+logreg = LogisticRegression(max_iter=200000000, random_state=80)
 c_space = np.logspace(0, 1, 15)
 param_grid = {'C': c_space}
-
 logreg_cv = GridSearchCV(logreg, param_grid, cv=10)
 logreg_cv.fit(X_train_res, np.ravel(y_train_res))
-y_pred_LR2 = logreg_cv.predict(X_test)
+y_pred_LR = logreg_cv.predict(X_test)
 print(logreg_cv.best_params_)
 
-yhat = logreg_cv.predict_proba(X_test)[:,1]
-
+y_pred = logreg_cv.predict_proba(X_test)[:,1]
 def to_labels(pos_probs, threshold):
     return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y_test, to_labels(y_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
 
-thresholds = arange(0, 1, 0.001)
-scores = [f1_score(y_test, to_labels(yhat, t)) for t in thresholds]
-ix = np.argmax(scores)
-print('Threshold=%.3f, F-Score=%.5f' % (thresholds[ix], scores[ix]))
-threshold = 0.514
-predicted_proba = logreg_cv.predict_proba(X_test)
-predicted = (predicted_proba [:,1] >= threshold).astype('int')
+threshold = 0.510
+y_pred2 = logreg_cv.predict_proba(X_test)
+predicted_LR = (y_pred2 [:,1] >= threshold).astype('int')
 
-print(classification_report(y_test, predicted)) 
-print(confusion_matrix(y_test, predicted))
+print("AUC:", metrics.roc_auc_score(y_test, y_pred2[:,1]))
+print("F1:",metrics.f1_score(y_test, predicted_LR))
+print("Classification report: \n", classification_report(y_test, predicted_LR)) 
+print("Confusion matrix: \n", confusion_matrix(y_test, predicted_LR))
 
 ## Random Forest
 RF = RandomForestClassifier(random_state=80)
-RF.fit(X_train_res, np.ravel(y_train_res))
-y_pred_RF = RF.predict(X_test)
 
 n_estimators = np.linspace(64, 128, endpoint=True, dtype=int)
 criterion = ['gini', 'entropy']
-max_depth =  range(5,9)
+max_depth =  range(5,10)
 max_features = ['auto', 'sqrt', 'log2']
 bootstrap = ['True', 'False']
 gridparameters = {'n_estimators': n_estimators, 'criterion': criterion, 'max_depth' : max_depth, 
@@ -114,3 +111,202 @@ RFcv = GridSearchCV(estimator = RF, param_grid = gridparameters, scoring = 'f1',
 RFcv.fit(X_train_res, np.ravel(y_train_res))
 y_pred_RFcv = RFcv.predict(X_test)
 print(RFcv.best_params_)
+
+y_pred = RFcv.predict_proba(X_test)[:,1]
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y_test, to_labels(y_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
+
+threshold = 0.329
+y_pred2 = RFcv.predict_proba(X_test)
+predicted_RF = (y_pred2 [:,1] >= threshold).astype('int')
+
+print("F1:",metrics.f1_score(y_test, predicted_RF))
+print("Classification report: \n", classification_report(y_test, predicted_RF)) 
+print("Confusion matrix: \n", confusion_matrix(y_test, predicted_RF))
+
+fi = pd.DataFrame({'feature': list(X.columns),
+                   'importance': RFcv.feature_importances_}).\
+                    sort_values('importance', ascending = False)
+print(fi)
+
+cnf_matrix = confusion_matrix(y_test, predicted_RF)
+class_names=[0,1] 
+fig, ax = plt.subplots()
+tick_marks = np.arange(len(class_names))
+plt.xticks(tick_marks, class_names, fontname="Times New Roman")
+plt.yticks(tick_marks, class_names, fontname="Times New Roman")
+sns.set(font_scale=1.8)
+sns.heatmap(pd.DataFrame(cnf_matrix/np.sum(cnf_matrix)), annot=True,cmap="Blues" ,fmt='.2%')
+ax.xaxis.set_label_position("top")
+plt.tight_layout()
+plt.title('Confusion matrix DF1', y=1.1, fontname="Times New Roman")
+plt.ylabel('Actual label', fontname="Times New Roman")
+plt.xlabel('Predicted label', fontname="Times New Roman")
+
+
+## Pre-menopausal women DF2
+feature_cols2 = ["Age", "N_donaties", "Weight", "Ever_fainted", "HC_total"]
+X2 = df[feature_cols2]
+Y2 = df.VVR
+X_train2, X_test2, y_train2, y_test2 = train_test_split(X2, Y2, test_size=0.3, random_state=9) 
+
+sm = SMOTE(sampling_strategy=0.4, random_state=42)
+X2_sm, Y2_sm = sm.fit_resample(X_train2, y_train2)
+RUS = RandomUnderSampler(sampling_strategy = 0.5)
+X2_train_res, y2_train_res = RUS.fit_resample(X2_sm, Y2_sm)
+
+# Logistic regression
+logreg_cv2 = GridSearchCV(logreg, param_grid, cv=10)
+logreg_cv2.fit(X2_train_res, np.ravel(y2_train_res))
+y2_pred_LR = logreg_cv2.predict(X2_test)
+
+y2_pred = logreg_cv2.predict_proba(X2_test)[:,1]
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y2_test, to_labels(y2_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
+
+threshold = 0.443
+y2_pred2 = logreg_cv2.predict_proba(X2_test)
+predicted_LR2 = (y2_pred2 [:,1] >= threshold).astype('int')
+
+print("AUC DF2:", metrics.roc_auc_score(y2_test, y2_pred2[:,1]))
+print("F1 DF2:",metrics.f1_score(y2_test, predicted_LR2))
+print("Classification report DF2: \n", classification_report(y2_test, predicted_LR2)) 
+print("Confusion matrix DF2: \n", confusion_matrix(y2_test, predicted_LR2))
+
+# Random Forest
+n_estimators = np.linspace(64, 128, endpoint=True, dtype=int)
+criterion = ['gini', 'entropy']
+max_depth =  range(5,10)
+max_features = ['auto', 'sqrt', 'log2']
+bootstrap = ['True', 'False']
+gridparameters = {'n_estimators': n_estimators, 'criterion': criterion, 'max_depth' : max_depth, 
+                   'max_features': max_features, 'bootstrap': bootstrap}
+RFcv2 = GridSearchCV(estimator = RF, param_grid = gridparameters, scoring = 'f1', refit = 'f1', verbose=0, cv=10)
+RFcv2.fit(X2_train_res, np.ravel(y2_train_res))
+y2_pred_RFcv2 = RFcv2.predict(X2_test)
+print(RFcv2.best_params_)
+
+y2_pred = RFcv2.predict_proba(X2_test)[:,1]
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y2_test, to_labels(y2_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
+
+threshold = 0.310
+y2_pred2 = RFcv2.predict_proba(X2_test)
+predicted_RF2 = (y2_pred2 [:,1] >= threshold).astype('int')
+
+print("F1 DF2:",metrics.f1_score(y2_test, predicted_RF2))
+print("Classification report: \n", classification_report(y2_test, predicted_RF2)) 
+print("Confusion matrix: \n", confusion_matrix(y2_test, predicted_RF2))
+
+fi2 = pd.DataFrame({'feature': list(X2.columns),
+                   'importance': RFcv2.feature_importances_}).\
+                    sort_values('importance', ascending = False)
+print(fi2)
+
+cnf_matrix = confusion_matrix(y2_test, predicted_RF2)
+class_names=[0,1] 
+fig, ax = plt.subplots()
+tick_marks = np.arange(len(class_names))
+plt.xticks(tick_marks, class_names, fontname="Times New Roman")
+plt.yticks(tick_marks, class_names, fontname="Times New Roman")
+sns.set(font_scale=1.8)
+sns.heatmap(pd.DataFrame(cnf_matrix/np.sum(cnf_matrix)), annot=True,cmap="Blues" ,fmt='.2%')
+ax.xaxis.set_label_position("top")
+plt.tight_layout()
+plt.title('Confusion matrix DF2', y=1.1, fontname="Times New Roman")
+plt.ylabel('Actual label', fontname="Times New Roman")
+plt.xlabel('Predicted label', fontname="Times New Roman")
+
+
+## Post-menopausal women DF3
+feature_cols3 = ["Age", "N_donaties", "Weight", "Ever_fainted", "HS_total"]
+X3 = df[feature_cols3]
+Y3 = df.VVR
+X_train3, X_test3, y_train3, y_test3 = train_test_split(X3, Y3, test_size=0.3, random_state=9) 
+
+sm = SMOTE(sampling_strategy=0.4, random_state=42)
+X3_sm, Y3_sm = sm.fit_resample(X_train3, y_train3)
+RUS = RandomUnderSampler(sampling_strategy = 0.5)
+X3_train_res, y3_train_res = RUS.fit_resample(X3_sm, Y3_sm)
+
+# Logistic regression
+logreg_cv3 = GridSearchCV(logreg, param_grid, cv=10)
+logreg_cv3.fit(X3_train_res, np.ravel(y3_train_res))
+y3_pred_LR = logreg_cv3.predict(X3_test)
+
+y3_pred = logreg_cv3.predict_proba(X3_test)[:,1]
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y3_test, to_labels(y3_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
+
+threshold = 0.591
+y3_pred2 = logreg_cv3.predict_proba(X3_test)
+predicted_LR3 = (y3_pred2 [:,1] >= threshold).astype('int')
+
+print("AUC DF3:", metrics.roc_auc_score(y3_test, y3_pred2[:,1]))
+print("F1 DF3:",metrics.f1_score(y3_test, predicted_LR2))
+print("Classification report DF3: \n", classification_report(y3_test, predicted_LR3)) 
+print("Confusion matrix DF3: \n", confusion_matrix(y3_test, predicted_LR3))
+
+# Random Forest
+n_estimators = np.linspace(64, 128, endpoint=True, dtype=int)
+criterion = ['gini', 'entropy']
+max_depth =  range(5,10)
+max_features = ['auto', 'sqrt', 'log2']
+bootstrap = ['True', 'False']
+gridparameters = {'n_estimators': n_estimators, 'criterion': criterion, 'max_depth' : max_depth, 
+                   'max_features': max_features, 'bootstrap': bootstrap}
+RFcv3 = GridSearchCV(estimator = RF, param_grid = gridparameters, scoring = 'f1', refit = 'f1', verbose=0, cv=10)
+RFcv3.fit(X3_train_res, np.ravel(y3_train_res))
+y3_pred_RFcv3 = RFcv3.predict(X3_test)
+print(RFcv3.best_params_)
+
+y3_pred = RFcv3.predict_proba(X3_test)[:,1]
+def to_labels(pos_probs, threshold):
+    return (pos_probs >= threshold).astype('int')
+thresholds = np.arange(0, 1, 0.001)
+scores = [f1_score(y3_test, to_labels(y3_pred, t)) for t in thresholds]
+a = np.argmax(scores)
+print('Threshold=%.3f, F-Score=%.3f' % (thresholds[a], scores[a]))
+
+threshold = 0.360
+y3_pred2 = RFcv3.predict_proba(X3_test)
+predicted_RF3 = (y3_pred2 [:,1] >= threshold).astype('int')
+
+print("F1 DF3:",metrics.f1_score(y3_test, predicted_RF3))
+print("Classification report: \n", classification_report(y3_test, predicted_RF3)) 
+print("Confusion matrix: \n", confusion_matrix(y3_test, predicted_RF3))
+
+fi3 = pd.DataFrame({'feature': list(X3.columns),
+                   'importance': RFcv3.feature_importances_}).\
+                    sort_values('importance', ascending = False)
+print(fi3)
+
+cnf_matrix = confusion_matrix(y3_test, predicted_RF3)
+class_names=[0,1] 
+fig, ax = plt.subplots()
+tick_marks = np.arange(len(class_names))
+plt.xticks(tick_marks, class_names, fontname="Times New Roman")
+plt.yticks(tick_marks, class_names, fontname="Times New Roman")
+sns.set(font_scale=1.8)
+sns.heatmap(pd.DataFrame(cnf_matrix/np.sum(cnf_matrix)), annot=True,cmap="Blues" ,fmt='.2%')
+ax.xaxis.set_label_position("top")
+plt.tight_layout()
+plt.title('Confusion matrix DF3', y=1.1, fontname="Times New Roman")
+plt.ylabel('Actual label', fontname="Times New Roman")
+plt.xlabel('Predicted label', fontname="Times New Roman")
